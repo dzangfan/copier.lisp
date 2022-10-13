@@ -163,10 +163,65 @@ first element. `nil' otherwise."
 list. Return a property list, which has four properties:
 
 1. :required Positional arguments (List of symbol)
-2. :key      Keyword arguments (List of symbol)
+2. :key      Keyword arguments (Property list)
 3. :rest     Rest argument (Symbol)
 4. :optional Optional argument (Symbol)"
-    )
+    (macrolet ((assert* (pred)
+                 `(assert ,pred (lambda-list)
+                          "~S is not a ordinary lambda list" lambda-list))
+               (field (name)
+                 `(getf result ,name)))
+      (loop :with cur-ctx := :required
+            :and result := ()
+            :for elt :in lambda-list
+            :if (eq '&aux elt)
+              :return result
+            :else :do
+              (ecase cur-ctx
+                (:required
+                 (assert* (symbolp cur-ctx))
+                 (if (member elt '(&optional &rest &key) :test #'eq)
+                     (setf cur-ctx elt)
+                     (push elt (field :required))))
+                (&optional
+                 (cond ((symbolp elt) (setf (field :optional) elt))
+                       (t (assert* (and elt (listp elt)))
+                          (setf (field :optional) (car elt))))
+                 (setf cur-ctx 'optional-end))
+                (optional-end
+                 (assert* (member elt '(&rest &key) :test #'eq))
+                 (setf cur-ctx elt))
+                (&rest
+                 (assert* (symbolp elt))
+                 (setf (field :rest) elt
+                       cur-ctx 'rest-end))
+                (rest-end
+                 (assert* (eq '&key elt))
+                 (setf cur-ctx elt))
+                (&key
+                 (multiple-value-bind (keyword-name variable-name)
+                     (cond ((eq '&allow-other-keys elt)
+                            (return-from extract-variables-from-lambda-list
+                              result))
+                           ((symbolp elt)
+                            (values (intern (symbol-name elt) :keyword) elt))
+                           (t (assert* (and elt (listp elt)))
+                              (let ((first (car elt)))
+                                (cond ((symbolp first)
+                                       (values (intern (symbol-name first)
+                                                       :keyword)
+                                               first))
+                                      (t (assert* (and (list first)
+                                                       (= 2 (length first))))
+                                         (apply #'values first))))))
+                   (let ((kwd-args (field :key)))
+                     (setf (getf kwd-args keyword-name) variable-name)
+                     (setf (field :key) kwd-args)))))
+            :end
+            :finally (progn (when (field :required)
+                              (setf (field :required)
+                                    (reverse (field :required))))
+                            (return result)))))
 
   (defun create-layered-lambda (name lambda-list)
     "Create source code of layered function."
