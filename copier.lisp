@@ -223,15 +223,44 @@ list. Return a property list, which has four properties:
                                     (reverse (field :required))))
                             (return result)))))
 
+  (defun reform-argument-list (lambda-list)
+    "Return a invocation except the operator. For example, for
+following lambda lists
+
+  ()
+  (a b c)
+  (a b &optional c)
+  (a b &rest c)
+  (a b &key c)
+
+following applicable lists will be returned correspondingly.
+
+  (nil)
+  (a b c nil)
+  (a b c nil)
+  (a b c)
+  (a b (:c c))"
+    (let* ((variables (extract-variables-from-lambda-list lambda-list))
+           (required (getf variables :required))
+           (optional (getf variables :optional))
+           (rest (getf variables :rest))
+           (key (getf variables :key))
+           (required* (append required (and optional (list optional)))))
+      (if (null rest)
+          (append required* (list key))
+          (append required* key (list rest)))))
+
   (defun create-layered-lambda (name lambda-list)
     "Create source code of layered function."
-    (declare (ignore lambda-list))
-    `(lambda (&rest arguments)
-       (let ((combiner (get ',name 'layered-functions-combiner))
-             (result (apply-with-context ',name arguments)))
-         (if combiner
-             (funcall combiner result)
-             result))))
+    (let ((combiner (gensym "combiner"))
+          (result (gensym "result"))
+          (args (reform-argument-list lambda-list)))
+      `(lambda ,lambda-list
+         (let ((,combiner (get ',name 'layered-functions-combiner))
+               (,result (apply-with-context ',name ,@args)))
+           (if ,combiner
+               (funcall ,combiner ,result)
+               ,result)))))
 
   (defun deflun-aux (name lambda-list clauses)
     "Define layered functions named NAME with LAMBDA-LIST. CLAUSES is
@@ -311,15 +340,3 @@ invoked in context of `deflun'"
   (declare (ignore string))
   (error "`note' must be called in context of `deflun'"))
 
-(defstruct person name email age)
-
-(deflun detail (person)
-  (in-layer t
-    (format nil "Name: ~A" (person-name person)))
-  (in-layer email
-    (format nil "; Email: ~A" (person-email person)))
-  (in-layer age
-    (format nil "; Age: ~A" (person-age person)))
-  (finally (result)
-    (apply #'concatenate 'string result))
-  (note-that "This is a function"))
