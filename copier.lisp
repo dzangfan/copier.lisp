@@ -3,13 +3,6 @@
 
 (defconstant layer-active-state :active)
 
-(defmacro deflayer (layer-name &optional documentation)
-  "Create a layer called LAYER-NAME, which must be a symbol."
-  (check-type layer-name symbol)
-  (check-type documentation (or null string))
-  `(setf (get ',layer-name 'layer-documentation) ,documentation
-         (get ',layer-name 'layer-p) t))
-
 (eval-when (:compile-toplevel :load-toplevel :execute)
 
   (defun activeness-descriptor-p (thing)
