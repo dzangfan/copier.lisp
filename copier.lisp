@@ -309,10 +309,34 @@ The third documentation clause is a equivalent of docstring of `defun'."
           :finally
              (return
                `(progn ,@transformed-clauses
-                       (setf (symbol-function ',name)
-                             ,(create-layered-lambda name lambda-list)))))))
+                       (unless (get ',name 'layered-function-p)
+                         (setf (symbol-function ',name)
+                               ,(create-layered-lambda name lambda-list)
+                               (get ',name 'layered-function-p) t)))))))
+
+(defun layered-fmakunbound (symbol)
+  "Clean properties created by `deflun'."
+  (when (get symbol 'layered-function-p)
+    (fmakunbound symbol))
+  (macrolet ((discard (indicator) `(remf (symbol-plist symbol) ,indicator)))
+    (discard 'layered-function-p)
+    (discard 'layered-functions)
+    (discard 'layered-functions-combiner)))
 
 (defmacro deflun (name lambda-list &body clauses)
+  "Define a layered function named NAME.
+
+Following properties will be used on symbol NAME:
+
+1. `layered-function-p' a flag indicating whether `symbol-function' is
+                        set
+
+2. `layered-functions' a list of defined functions in separate layers
+
+3. `layered-functions-combiner' a function combining result of layered
+                                functions
+
+Use `layered-fmakunbound' to clean up this properties."
   (deflun-aux name lambda-list clauses))
 
 (defmacro in-layer (name &body body)
@@ -332,4 +356,3 @@ invoked in context of `deflun'."
 invoked in context of `deflun'"
   (declare (ignore string))
   (error "`note' must be called in context of `deflun'"))
-
