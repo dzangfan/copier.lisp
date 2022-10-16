@@ -80,4 +80,10 @@ where "activeness descriptor" is one of following forms:
 3. ~(:inactive name)~
 
 The order of activeness descriptors can affect the order of
-invocations of layered functions.
+invocations of layered functions. Special layer ~t~ is active in
+global environment. That is to say every code is wrapped in context:
+
+#+begin_src lisp
+  (with (:active t)
+    ...)
+#+end_src
