@@ -3,6 +3,8 @@
 
 (defconstant layer-active-state :active)
 
+(defparameter *no-available-function* nil)
+
 (eval-when (:compile-toplevel :load-toplevel :execute)
 
   (defun activeness-descriptor-p (thing)
@@ -103,8 +105,15 @@ FUNCTION-SYMBOL by ARGUMENTS, in context of `*active-layers*'."
          (available-functions (get function-symbol 'layered-functions))
          (function-cells (resolve-functions available-functions))
          (functions (mapcar #'cdr function-cells)))
-    (loop :for fn :in functions
-          :collecting (apply fn args))))
+    (loop :with cur-proceed := (lambda (default) default)
+          :for cur-function :in functions :do
+            (let ((proceed cur-proceed)
+                  (function cur-function))
+              (setf cur-proceed
+                    (lambda (default)
+                      (declare (ignore default))
+                      (apply function proceed args))))
+          :finally (return (funcall cur-proceed *no-available-function*)))))
 
 (defun remove* (element list &key (key #'identity) (test #'eql))
   "Like standard function `remove' except only operating on `list'
@@ -131,16 +140,6 @@ called FUNCTION-SYMBOL. Pass FORCE-P as `t' to prevent it."
       (setf (get function-symbol 'layered-functions)
             (cons (cons layer function)
                   clean-functions)))))
-
-(defun install-layered-function-combiner (function-symbol function
-                                          &optional force-p)
-  "Install a combiner for FUNCTION-SYMBOL as FUNCTION. A warning will
-be raised if there exists a combiner. Pass FORCE-P as `t' to prevent
-it."
-  (when (and (not force-p) (get function-symbol 'layered-functions-combiner))
-    (warn "Redefined layered function combiner of ~A" function-symbol))
-  (setf (get function-symbol 'layered-functions-combiner)
-        function))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (defun tagged-list-p (lst)
@@ -215,7 +214,7 @@ list. Return a property list, which has four properties:
                               (setf (field :required)
                                     (reverse (field :required))))
                             (return result)))))
-
+  
   (defun reform-argument-list (lambda-list)
     "Return a invocation except the operator. For example, for
 following lambda lists
@@ -245,27 +244,18 @@ following applicable lists will be returned correspondingly.
 
   (defun create-layered-lambda (name lambda-list)
     "Create source code of layered function."
-    (let ((combiner (gensym "combiner"))
-          (result (gensym "result"))
-          (args (reform-argument-list lambda-list)))
+    (let ((args (reform-argument-list lambda-list)))
       `(lambda ,lambda-list
-         (let ((,combiner (get ',name 'layered-functions-combiner))
-               (,result (apply-with-context ',name ,@args)))
-           (if ,combiner
-               (funcall ,combiner ,result)
-               ,result)))))
+         (apply-with-context ',name ,@args))))
 
   (defun deflun-aux (name lambda-list clauses)
     "Define layered functions named NAME with LAMBDA-LIST. CLAUSES is
 any number of forms which has one of following structures:
 
-  1. (:in-layer <layer-name>
+  1. (in-layer <layer-name>
        <function-body>)
 
-  2. (:finally (<variable-name>)
-       <result-producer>)
-
-  3. (:documentation <doc-string>)
+  2. (note-that <doc-string>)
 
 every clause (1.) defines a function in layer <layer-name>, and all of them
 in CLAUSES has the same signature (NAME . LAMBDA-LIST).
@@ -281,30 +271,38 @@ of clause: <variable-name> will be bound to the resulting list and
 <result-producer> yield the real result.
 
 The third documentation clause is a equivalent of docstring of `defun'."
-    (loop :for clause :in clauses
+    (loop :with lambda-list* := (cons 'proceed lambda-list)
+          :and declaration := ()
+          :and declaration-end := nil
+          :for clause :in clauses
           :for tag := (tagged-list-p clause)
           :if (not tag)
             :do (error "Invalid clause for `deflun': ~S" clause)
           :else
             :collecting
             (ecase tag
-              ((:in-layer in-layer)
+              (in-layer
+                  (setf declaration-end t)
                   (destructuring-bind (_ layer &body body) clause
                     (declare (ignore _))
-                    `(install-layered-function ',name ',layer
-                                               (lambda ,lambda-list ,@body))))
-              ((:documentation note-that)
+                    `(install-layered-function
+                      ',name ',layer
+                      (lambda ,lambda-list*
+                        ,@declaration
+                        (flet ((proceed (&optional default)
+                                 (funcall proceed default)))
+                          ,@body)))))
+              (note-that
                (destructuring-bind (_ docstring) clause
                  (declare (ignore _))
                  `(progn (when (documentation ',name 'function)
                            (warn "Redefined documentation of ~A" ',name))
                          (setf (documentation ',name 'function) ,docstring))))
-              ((:finally finally)
-                  (destructuring-bind (_ result-name &body body) clause
-                    (declare (ignore _))
-                    `(install-layered-function-combiner
-                      ',name
-                      (lambda ,result-name ,@body)))))
+              (declare
+               (if declaration-end
+                   (warn "Declaration after layered function will be ignored")
+                   (push clause declaration))
+               nil))
             :into transformed-clauses
           :finally
              (return
@@ -320,11 +318,39 @@ The third documentation clause is a equivalent of docstring of `defun'."
     (fmakunbound symbol))
   (macrolet ((discard (indicator) `(remf (symbol-plist symbol) ,indicator)))
     (discard 'layered-function-p)
-    (discard 'layered-functions)
-    (discard 'layered-functions-combiner)))
+    (discard 'layered-functions)))
 
 (defmacro deflun (name lambda-list &body clauses)
   "Define a layered function named NAME.
+
+NAME and LAMBDA-LIST have the same meaning with `defun'. Note that
+LAMBDA-LIST must be an ordinary lambda list, like what `defun' is
+using. CLAUSES are several forms which has one of following form:
+
+1. (declare &rest declare-descriptors)
+
+2. (note-that docstring)
+
+3. (in-layer layer-name &body body)
+
+`declare' has the same meaning with `defun', and note that ALL
+declarations must be placed before `in-layer' clause. `note-that'
+specifies docstring of the function, which should be called only
+once. `in-layer' defines a new function in specific layer. A local
+function `proceed' is available in body of layered function:
+
+  (proceed &optional default)
+
+to invoke functions before current layer. A default value will be
+returned if no more functions. For example:
+
+(deflun greeting (&optional (name \"friend\"))
+  (declare (ignorable name))
+  (in-layer t
+    (format nil \"Hello, ~A\" name))
+  (in-layer emphasis
+    (format nil \"~A!!!\" (proceed)))
+  (note-that \"Give a greeting\"))
 
 Following properties will be used on symbol NAME:
 
@@ -333,9 +359,6 @@ Following properties will be used on symbol NAME:
 
 2. `layered-functions' a list of defined functions in separate layers
 
-3. `layered-functions-combiner' a function combining result of layered
-                                functions
-
 Use `layered-fmakunbound' to clean up this properties."
   (deflun-aux name lambda-list clauses))
 
@@ -343,16 +366,10 @@ Use `layered-fmakunbound' to clean up this properties."
   "Create a function in layer NAME. This macro must be invoked in
 context of `deflun'."
   (declare (ignore name body))
-  (error "`in-layer' must be called in context of `defun'"))
-
-(defmacro finally ((result) &body body)
-  "Create a combiner of functions in all layers. This macro must be
-invoked in context of `deflun'."
-  (declare (ignore result body))
-  (error "`fianlly' must be called in context of `defun'"))
+  (error "`in-layer' must be called in context of `deflun'"))
 
 (defmacro note-that (string)
-  "Create documentation for current function. This macro must be
-invoked in context of `deflun'"
+  "Specify usage of a layered function. This macro must be invoked in
+context of `deflun', or nothing will happen."
   (declare (ignore string))
-  (error "`note' must be called in context of `deflun'"))
+  nil)

@@ -1,0 +1,83 @@
+* copier - COP extension for Lisp
+
+~copier~ is a experimental COP extension for Lisp. Instead of
+implementing all features useful in development, like interaction with
+object system, we explore the minimal implementation of a COP system
+and a consistent set of API.
+
+#+begin_src lisp
+  ;; Define a layered function
+  (deflun greet (&optional (name "friend"))
+    (declare (ignorable name))
+    (in-layer t                           ; Base layer
+      (format nil "Hello, ~A" name))
+    (in-layer hesitate                    ; New layer will be defined
+                                          ; when it is used the first
+                                          ; time
+      (format nil "~A..." (proceed)))
+    (in-layer gandalf
+      (format nil "\"~A\", said Gandalf" (proceed)))
+    (note-that "Give a greeting"))
+
+  (greet)                                 ; Hello, friend
+  (with hesitate (greet))                 ; Hello, friend...
+  (with (hesitate gandalf) (greet))       ; "Hello, friend...", said Gandalf
+  (with (gandalf hesitate) (greet))       ; "Hello, friend", said Gandalf...
+
+  (defun without-hesitate ()
+    (with (:inactive hesitate)
+      (greet)))
+
+  (with (hesitate gandalf)
+    (without-hesitate))                   ; "Hello, friend", said Gandalf
+#+end_src
+
+** Usage
+
+To install this library, just download copier.lisp and ~load~ it. The
+basic usage involves two macro: ~deflun~ and ~with~.
+
+#+begin_src lisp
+  (DEFLUN NAME LAMBDA-LIST &BODY CLAUSES)
+#+end_src
+
+~deflun~ defines several functions in different layers. ~name~
+represents the name of these functions and ~lambda-list~ is a [[http://clhs.lisp.se/Body/03_da.htm][ordinary
+lambda list]]. ~clauses~ is several clause which must have one of
+following forms:
+
+1. ~(IN-LAYER NAME &BODY BODY)~
+2. ~(DECLARE &REST DECLARE-DESCRIPTORS)~
+3. ~(NOTE-THAT STRING)~
+
+~in-layer~ defines a layered function in layer ~name~. A special
+function called ~proceed~ is available in ~body~, which invokes
+layered functions in layers before current layer. Note that ~proceed~
+can be neither defined nor assigned as a local variable. ~declare~ has
+the same meaning with other local declaration, except that all
+declaration should appear before any ~in-layer~ clause. ~note-that~
+defines ~documentation~ of the function named ~name~. That is to say,
+all layered functions share the same docstring. A common function is
+available after the definition, which can be used like a function
+defined by ~defun~.
+
+#+begin_src lisp
+  (WITH ACTIVENESS-DESCRIPTORS &BODY BODY)
+#+end_src
+
+
+~with~ can be used to modify the context of invocations. The
+"activeness" of layers is specified by ~activeness-descriptors~, which
+is one of following forms:
+
+1. a activeness descriptor
+2. a list of activeness descriptors
+
+where "activeness descriptor" is one of following forms:
+
+1. a symbol, e.g. ~name~, which is equal to ~(:active name)~
+2. ~(:active name)~
+3. ~(:inactive name)~
+
+The order of activeness descriptors can affect the order of
+invocations of layered functions.
