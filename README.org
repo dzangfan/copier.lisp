@@ -1,8 +1,8 @@
 * copier - COP extension for Lisp
 
 ~copier~ is a experimental COP extension for Lisp. Instead of
-implementing all features useful in development, like interaction with
-object system, we explore the minimal implementation of a COP system
+implementing all features useful in development like interaction with
+object system, we explore the minimal implementation for a COP system
 and a consistent set of API.
 
 #+begin_src lisp
@@ -34,7 +34,7 @@ and a consistent set of API.
 
 ** Usage
 
-To install this library, just download copier.lisp and ~load~ it. The
+To install this library, just download [[https://github.com/dzangfan/copier.lisp/blob/main/copier.lisp][coiper.lisp]] and ~load~ it. The
 basic usage involves two macro: ~deflun~ and ~with~.
 
 #+begin_src lisp
